@@ -1,25 +1,14 @@
 #!/usr/bin/python
-#   File : check_beacon_presence.py
-#   Author: jmleglise
-#   Date: 10-Nov-2016
-#   Description : Check the presence of a list of beacon (BlueTooth Low Energy V4.0) and update uservariables in Domoticz accordingly. 
-#   URL : https://github.com/jmleglise/mylittle-domoticz/edit/master/Presence%20detection%20%28beacon%29/check_beacon_presence.py
-#   Version : 1.0
-#   Version : 1.1   Log + Mac Adress case insensitive 
-#   Version : 1.2   Fix initial AWAY state
-#   Version : 1.3   Log + script takes care of hciconfig + Return the RSSI when detected and "AWAY" otherwise
-#   Version : 1.4   Fix initial HOME state
-#   Version : 1.5   Split loglevel warning / debug
-#   Version : 1.6   Add le_handle_connection_complete +  Manage Domoticz login
-#
-# Feature : 
+#   File : bluedetect.py
+#   Author: jmleglise - lalemanw
+#   Date: 25-10-2017
+#   Version 1.6.1 initial split off
+
+#   Description : Modified version of jmleglises' script to run on switches instead of uservariables (now who doesnt want to see if their kids sneak out at night?)
+#   His original script can be found here: https://github.com/jmleglise/mylittle-domoticz/edit/master/Presence%20detection%20%28beacon%29/check_beacon_presence.py
+
 # Script takes care of Bluetooth Adapter. Switch it UP RUNNING.
-# When the MACADRESS of a list of beacons are detected, update DOMOTICZ uservariable.
-# Script operates now in 2 mode. Choose for each beacon witch one you want :
-#       REPEAT MODE : For beacon in range, update the uservariable every 3 secondes with the RSSI. And "AWAY" otherwise.
-#       SWITCH_MODE : For beacon in range, update only 1 time the uservariable with "HOME". And "AWAY" otherwise.
-# Send "AWAY" when the beacons are not in range.
-# The detection is very fast : around 4 secondes. And the absence is verified every 5 seconds by comparing the hour of the last presence with a time out for each beacon.
+# When the MACADRESS of a list of beacons are detected, update DOMOTICZ.
 #
 # References :
 # https://www.domoticz.com/wiki/Presence_detection_%28Bluetooth_4.0_Low_energy_Beacon%29
@@ -27,46 +16,39 @@
 # https://wiki.tizen.org/wiki/Bluetooth
 # https://storage.googleapis.com/google-code-archive-source/v2/code.google.com/pybluez/source-archive.zip  => pybluez\examples\advanced\inquiry-with-rssi.py
 #
-# Required in Domoticz : An uservariable of type String for each BLE Tag
-#
-# Usefull command
-# sudo /etc/init.d/check_beacon_presence [stop|start|restart|status] 
-# 
+# Required in Domoticz : A switchlight with known idx value
 # Configuration :
 # Change your IP and Port here :  
-URL_DOMOTICZ = 'https://xxxxxx.xxxxxx.org:xxxx/json.htm?type=command&param=updateuservariable&idx=PARAM_IDX&vname=PARAM_NAME&vtype=2&vvalue=PARAM_CMD'
-DOMOTICZ_USER='xxxxxx'
-DOMOTICZ_PASS='xxxxxx'
+URL_DOMOTICZ = 'http://xxxxx.xx:port/json.htm?type=command&param=switchlight&idx=PARAM_IDX&switchcmd=PARAM_CMD'
+DOMOTICZ_USER='xxxx'
+DOMOTICZ_PASS='xxxx'
 
-REPEAT_MODE=1
 SWITCH_MODE=0
 
 #
-# Configure your Beacons in the TAG_DATA table with : [Name,MacAddress,Timeout,0,idx,mode]
-# Name : the name of the uservariable used in Domoticz
+# Configure your Beacons in the TAG_DATA table with : [Name,MacAddress,Timeout,0,idx]
+# name can be random, best to use something recongizable(no spaces)
 # macAddress : case insensitive
 # Timeout is in secondes the elapsed time  without a detetion for switching the beacon AWAY. Ie :if your beacon emits every 3 to 8 seondes, a timeout of 15 secondes seems good.
 # 0 : used by the script (will keep the time of the last broadcast) 
-# idx of the uservariable in Domoticz for this beacon
-# mode : SWITCH_MODE = One update per status change / REPEAT_MODE = continuous updating the RSSI every 3 secondes
+# idx of the switch in Domoticz for this beacon
+
 
 TAG_DATA = [
-            ["Tag_White","cc:fd:36:20:32:42",30,0,8,REPEAT_MODE],
-            ["Tag_Pink","f1:0d:d6:e6:b0:b2",30,0,6,REPEAT_MODE],
-            ["Tag_Orange","Fb:14:78:38:18:5e",30,0,9,REPEAT_MODE],
-            ["Tag_Green","ff:ff:60:00:22:ae",30,0,7,REPEAT_MODE]
+            ["Tag_me","7C:2F:80:CE:F0:D6",30,0,2],
+            ["Tag_wife","f1:0d:d6:e6:b0:b2",30,0,258]
            ]
 
            
 import logging
 
 # choose between DEBUG (log every information) or warning (change of state) or CRITICAL (only error)
-#logLevel=logging.DEBUG
-logLevel=logging.CRITICAL
+logLevel=logging.DEBUG
+#logLevel=logging.CRITICAL
 #logLevel=logging.WARNING
 
-logOutFilename='/var/log/check_beacon_presence.log'       # output LOG : File or console (comment this line to console output)
-ABSENCE_FREQUENCY=5  # frequency of the test of absence. in seconde. (without detection, switch "AWAY".
+#logOutFilename='/var/log/check_beacon_presence.log'       # output LOG : File or console (comment this line to console output)
+ABSENCE_FREQUENCY=5  # frequency of the test of absence. in seconde. (without detection, switch "Off".
 
 ################ Nothing to edit under this line #####################################################################################
 
@@ -138,7 +120,7 @@ class CheckAbsenceThread(threading.Thread):
             elapsed_time_absence=time.time()-tag[3]
             if elapsed_time_absence>=tag[2] : # sleep execute after the first Home check.
                 logging.warning('Tag %s not seen since %i sec => update absence',tag[0],elapsed_time_absence)
-                threadReqAway = threading.Thread(target=request_thread,args=(tag[4],"AWAY",tag[0]))
+                threadReqAway = threading.Thread(target=request_thread,args=(tag[4],"Off",tag[0]))
                 threadReqAway.start()
 
         while True:
@@ -147,7 +129,7 @@ class CheckAbsenceThread(threading.Thread):
                 elapsed_time_absence=time.time()-tag[3]
                 if elapsed_time_absence>=tag[2] and elapsed_time_absence<(tag[2]+ABSENCE_FREQUENCY) :  #update when > timeout ant only 1 time , before the next absence check [>15sec <30sec]
                     logging.warning('Tag %s not seen since %i sec => update absence',tag[0],elapsed_time_absence)
-                    threadReqAway = threading.Thread(target=request_thread,args=(tag[4],"AWAY",tag[0]))
+                    threadReqAway = threading.Thread(target=request_thread,args=(tag[4],"Off",tag[0]))
                     threadReqAway.start()
             
 FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -224,15 +206,10 @@ while True:
                                 if macAdressSeen.lower() == tag[1].lower():  # MAC ADDRESS
                                     logging.debug('Tag %s Detected %s - RSSI %s - DATA unknown %s', tag[0], macAdressSeen, struct.unpack("b", pkt[report_pkt_offset -1]),struct.unpack("b", pkt[report_pkt_offset -2])) #  Signal strenght + unknown (hope it's battery life).                                    
                                     elapsed_time=time.time()-tag[3]  # lastseen
-                                    if tag[5]==SWITCH_MODE and elapsed_time>=tag[2] : # Upadate only once : after an absence (>timeout). It's back again
-                                        threadReqHome = threading.Thread(target=request_thread,args=(tag[4],"HOME",tag[0]))  # IDX, RSSI, name
+                                    if elapsed_time>=tag[2] : # Upadate only once : after an absence (>timeout). It's back again
+                                        threadReqHome = threading.Thread(target=request_thread,args=(tag[4],"On",tag[0]))  # IDX, RSSI, name
                                         threadReqHome.start()
                                         logging.warning('Tag %s seen after an absence of %i sec : update presence',tag[0],elapsed_time)
-                                    elif tag[5]==REPEAT_MODE and elapsed_time>3 : # in continuous, Every 2 sec
-                                        rssi=''.join(c for c in str(struct.unpack("b", pkt[report_pkt_offset -1])) if c in '-0123456789')
-                                        threadReqHome = threading.Thread(target=request_thread,args=(tag[4],rssi,tag[0]))   # IDX, RSSI, name
-                                        threadReqHome.start()
-                                        logging.debug('Tag %s is still there with an RSSI of %s  : update presence with RSSI',tag[0],rssi)
                                     tag[3]=time.time()   # update lastseen
                                     
     sock.setsockopt( bluez.SOL_HCI, bluez.HCI_FILTER, old_filter )
