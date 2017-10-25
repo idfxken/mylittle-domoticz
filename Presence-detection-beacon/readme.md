@@ -1,3 +1,8 @@
+This was changed from jmleglises version to work with switches instead of user variables (now who doesnt like to know if their kids sneak off at night ? :)
+
+
+
+
 Check the presence of a list of beacons (BlueTooth Low Energy V4.0) and update uservariables in Domoticz accordingly.
 You can use this to see if a person (who always carries his/her beacon) is at home or not, and trigger events based on this.
 
